@@ -1,0 +1,454 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <math.h>
+
+#define MAXSIZE_INSTITUICAO 5
+#define MAXSIZE_CURSO 5
+#define MAX_OPCOES 5
+#define MAXSIZE_NOME_INST 100
+#define MAXSIZE_NOME_CURSO 100
+#define MAXSIZE_GRAU 2
+
+typedef struct {
+    char ident_instituicao[MAXSIZE_INSTITUICAO];
+    char ident_curso[MAXSIZE_CURSO];
+    char nome_instituicao[MAXSIZE_NOME_INST];
+    char nome_curso[MAXSIZE_NOME_CURSO];
+    char grau_curso[MAXSIZE_GRAU];
+    int vagas;
+    int vagas_preenchidas; // inicializada a 0
+    float nota_minima;
+} Cursos;
+
+typedef struct {
+    int ident_candidato;
+    float nota_prova_ingresso;
+    float nota_secundario;
+    float nota_candidatura;
+    int opcao_curso[MAX_OPCOES]; // caderno de PE (explicacao)
+    int colocacao; // inicializada a -1 (nao colocado)
+    int opcao_colocada; // inicializada a -1 (nenhuma opcao)
+} Candidatos;
+
+int num_cursos_counter(char *filename, int num_cursos); // funcao que le o ficheiro de curso e devolve o numero de cursos
+int num_candidatos_counter(char *filename, int num_candidatos); // funcao que le o ficheiro de candidatos e devolve o numero de candidatos
+void file_read_cursos(char *filename, Cursos *curso, int num_cursos); // funcao que le o ficheiro de cursos e atribui valores
+void file_read_candidatos(char *filename, Candidatos *candidato, int num_candidatos, Cursos *curso, int num_cursos); // funcao que le o ficheiro de candidatos e atribui valores
+void ordenar_candidatos_colocacao(Candidatos *candidato, int num_candidatos);
+void colocacao_candidatos(Candidatos *candidato, int num_candidatos, Cursos *curso, int num_cursos);
+
+void ordenar_candidatos_out(Candidatos *candidato, int num_candidatos);
+void ordenar_candidatos_nc(Candidatos *candidato, int num_candidatos);
+
+// apresentar candidatos por ordem de curso, ordem ascendente da nota, e ordem descendente de numero
+void file_write_candidatos_colocados(char *filename, Candidatos *candidato, int num_candidatos, Cursos *curso, int num_cursos);
+
+// mesma ordem que o ficheiro anterior mas com uma linha com as informacoes do curso
+void file_write_info_cursos_candidatos(char *filename, Candidatos *candidato, int num_candidatos, Cursos *curso, int num_cursos);
+
+// cursos por ordem crescente com o nome instituicao, curso, vagas, colocacoes e nota_minima
+void file_write_info_cursos(char *filename, Cursos *curso, int num_cursos);
+
+// ordem ascendente dos candidatos nao colocados com a sua nota
+void file_write_candidatos_nao_colocados(char *filename, Candidatos *candidato, int num_candidatos, Cursos *curso, int num_cursos);
+
+
+int main(){
+
+    // nomes dos ficheiros de entrada e saída por default (em testes)
+    char *in_cursos = "Cursos_N05_V02.csv", *in_candidatos = "Candidatos_N13_C20R_Ov542.csv"; // cursos.csv e candidatos.csv (originais)
+    char *out_colocacoes = "CNAES_Colocacoes.csv", *out_completo = "CNAES_Completo.csv";
+    char *out_cursos = "CNAES_Cursos.csv", *out_nc = "CNAES_NC.csv";
+
+    int num_cursos = 0, num_candidatos = 0;
+
+    num_cursos = num_cursos_counter(in_cursos, num_cursos); // valores de entrada da funcao
+    num_candidatos = num_candidatos_counter(in_candidatos, num_candidatos); // valores de entrada da funcao
+
+    Cursos *curso = NULL;
+    Candidatos *candidato = NULL;
+    curso = (Cursos*) malloc(num_cursos * sizeof(Cursos));
+    candidato = (Candidatos*) malloc(num_candidatos * sizeof(Candidatos));
+
+    if (curso == NULL || candidato == NULL) {
+        printf("Erro ao alocar memória.\n");
+        exit(1);
+    }
+
+    file_read_cursos(in_cursos, curso, num_cursos);
+    file_read_candidatos(in_candidatos, candidato, num_candidatos, curso, num_cursos);
+
+    //printf("\nCursos: %d", num_cursos);
+    //printf("\nCandidatos: %d", num_candidatos);
+
+    colocacao_candidatos(candidato, num_candidatos, curso, num_cursos);
+
+    //for(int i = num_candidatos - 1; i >= 0; i--){
+    //    printf("\n%d,%.1f,%d,%d", candidato[i].ident_candidato, candidato[i].nota_candidatura, candidato[i].opcao_colocada, candidato[i].opcao_curso[candidato[i].opcao_colocada - 1]);
+    //}
+
+    file_write_candidatos_colocados(out_colocacoes, candidato, num_candidatos, curso, num_cursos);
+    file_write_info_cursos_candidatos(out_completo, candidato, num_candidatos, curso, num_cursos);
+    file_write_info_cursos(out_cursos, curso, num_cursos);
+    file_write_candidatos_nao_colocados(out_nc, candidato, num_candidatos, curso, num_cursos);
+
+    free(curso);
+    free(candidato);
+    return 0;
+}
+
+int num_cursos_counter(char *filename, int num_cursos){
+
+    FILE *fp;
+    char line[200];
+
+    fp = fopen(filename, "r");
+    if(fp == NULL){
+        perror("Error in opening file.");
+        return (-1);
+    }
+
+    num_cursos = 0; // inicializacao a 0
+
+    fgets(line, sizeof(line), fp); // ignorar o cabecalho
+    while (fgets(line, sizeof(line), fp)){ // leitura linha a linha de um ficheiro .csv (argumentos separados por virgulas)
+        num_cursos ++; // counter para o numero de cursos
+    }
+
+    return num_cursos; // return do numero de cursos
+}
+
+int num_candidatos_counter(char *filename, int num_candidatos){
+
+    FILE *fp;
+    char line[200];
+
+    fp = fopen(filename, "r");
+    if(fp == NULL){
+        perror("Error in opening file.");
+        return (-1);
+    }
+
+    num_candidatos = 0; // inicializacao a 0
+
+    fgets(line, sizeof(line), fp); // ignorar o cabecalho
+    while (fgets(line, sizeof(line), fp)){ // leitura linha a linha de um ficheiro .csv (argumentos separados por virgulas)
+        num_candidatos ++; // counter para o numero de candidatos
+    }
+
+    return num_candidatos; // return do numero de candidatos
+}
+
+void file_read_cursos(char *filename, Cursos *curso, int num_cursos){
+
+    FILE *fp;
+    char *limit_str, line[250];
+    int i = 0; // i = numero de cursos, inicializado a 0
+
+
+    fp = fopen(filename, "r");
+    if(fp == NULL){
+        perror("Error in opening file.");
+        return;
+    }
+
+    fgets(line, sizeof(line), fp); // ignorar o cabecalho
+    while (fgets(line, sizeof(line), fp)){ // leitura linha a linha de um ficheiro .csv (argumentos separados por virgulas)
+
+        limit_str = strtok(line, ",");
+        strncpy(curso[i].ident_instituicao, limit_str, MAXSIZE_INSTITUICAO);
+
+        limit_str = strtok(NULL, ",");
+        strncpy(curso[i].ident_curso, limit_str, MAXSIZE_CURSO);
+
+        limit_str = strtok(NULL, ",");
+        strncpy(curso[i].nome_instituicao, limit_str, MAXSIZE_NOME_INST);
+
+        limit_str = strtok(NULL, ",");
+        strncpy(curso[i].nome_curso, limit_str, MAXSIZE_NOME_CURSO);
+
+        limit_str = strtok(NULL, ",");
+        strncpy(curso[i].grau_curso, limit_str, MAXSIZE_GRAU);
+
+        limit_str = strtok(NULL, "\n");
+        curso[i].vagas = atoi(limit_str);
+
+        curso[i].vagas_preenchidas = 0; // inicializacao do curso com 0 colocados
+
+        curso[i].nota_minima = 10; // inicializacao da nota minima a 10
+
+        i++; // percorrer os cursos
+    }
+
+    fclose(fp);
+    return;
+}
+
+void file_read_candidatos(char *filename, Candidatos *candidato, int num_candidatos, Cursos *curso, int num_cursos){
+
+    FILE *fp;
+    char *limit_str, line[250], *opcao_inst, *opcao_curso;
+    int i = 0, ret_inst = 1, ret_curso = 1; // i = numero de candidatos, inicializado a 0, retificacoes inicializadas a 1
+
+
+    fp = fopen(filename, "r");
+    if(fp == NULL){
+        perror("Error in opening file.");
+        return;
+    }
+
+    fgets(line, sizeof(line), fp); // ignorar o cabecalho
+
+    while(fgets(line, sizeof(line), fp)){ // leitura linha a linha de um ficheiro .csv (argumentos separados por virgulas)
+
+        limit_str = strtok(line, ",");
+        candidato[i].ident_candidato = atoi(limit_str);
+
+        limit_str = strtok(NULL, ",");
+        candidato[i].nota_prova_ingresso = atof(limit_str);
+
+        limit_str = strtok(NULL, ",");
+        candidato[i].nota_secundario = atof(limit_str);
+
+        limit_str = strtok(NULL, ",");
+        candidato[i].nota_candidatura = atof(limit_str);
+
+        for(int k = 0; k < MAX_OPCOES; k++){ // ciclo para iterar as diversas opcoes k
+
+            opcao_inst = strtok(NULL, ",\n");
+            opcao_curso = strtok(NULL, ",\n");
+
+            if((opcao_inst == NULL) && (opcao_curso == NULL)){
+
+                while(k < MAX_OPCOES){
+
+                    candidato[i].opcao_curso[k] = -1;
+                }
+
+                break;
+            }
+
+            for(int j = 0; j < num_cursos; j++){ // ciclo para verificar se a opcao k corresponde ao curso j
+
+                ret_inst = strcmp(opcao_inst, curso[j].ident_instituicao);
+                ret_curso = strcmp(opcao_curso, curso[j].ident_curso);
+
+                if((ret_inst == 0) && (ret_curso == 0)){
+                    candidato[i].opcao_curso[k] = j;
+                    break;
+                }
+            }
+        }
+        candidato[i].colocacao = -1; // inicialização da colocaçao do candidato em nenhum curso
+        candidato[i].opcao_colocada = -1; // inicializacao da opcao em que o candidato foi colocado como -1
+        i++; // percorrer os candidatos
+    }
+
+    fclose(fp);
+    return;
+}
+
+// algoritmo de Bubble sort para organizar os candidatos, com algumas optimizacoes
+void ordenar_candidatos_colocacao(Candidatos *candidato, int num_candidatos){
+
+    int i = 0, swaps = 0; // verificacao se os candidatos ja estao ordenados, de forma a se fazer menos iteracoes
+    Candidatos temp;
+
+    do{
+        swaps = 0;
+        for(int j = 0; j < (num_candidatos - 1 - i); j++){
+
+            // comparacao da posicao j com j + 1
+            if(candidato[j].nota_candidatura < candidato[j + 1].nota_candidatura){
+
+                temp = candidato[j];
+                candidato[j] = candidato[j + 1];
+                candidato[j + 1] = temp;
+
+                swaps = 1; // como se realizou uma troca os candidatos nao estao ordenados
+            }
+        }
+    }while(swaps == 1);
+}
+
+void colocacao_candidatos(Candidatos *candidato, int num_candidatos, Cursos *curso, int num_cursos){
+
+    // chamar a funcao para ordenar os candidatos
+    ordenar_candidatos_colocacao(candidato, num_candidatos);
+
+    for(int i = 0; i < num_candidatos; i++){
+
+        for(int j = 0; j < MAX_OPCOES; j++){
+
+            if(candidato[i].colocacao != -1){
+                break;
+            }
+
+            for(int k = 0; k < num_cursos; k++){
+
+                if(candidato[i].opcao_curso[j] == k){
+
+                    if((curso[k].vagas > curso[k].vagas_preenchidas) || (curso[k].nota_minima == candidato[i].nota_candidatura)){
+
+                        candidato[i].colocacao = k; // colocacao do candidato no curso k
+                        candidato[i].opcao_colocada = j + 1; // offset de vetor por comecar em 0
+                        curso[k].vagas_preenchidas ++; // atualizacao do numero
+                        curso[k].nota_minima = candidato[i].nota_candidatura;
+                        break;
+
+                    }else if(curso[k].vagas == curso[k].vagas_preenchidas){
+                        break;
+                    }
+                }
+            }
+        }
+    }
+}
+
+// algoritmo de Bubble sort para organizar os candidatos
+void ordenar_candidatos_out(Candidatos *candidato, int num_candidatos){
+
+    int i = 0, swaps = 0; // verificacao se os candidatos ja estao ordenados, de forma a se fazer menos iteracoes
+    Candidatos temp;
+
+    do{
+        swaps = 0;
+        for(int j = 0; j < (num_candidatos - 1 - i); j++){
+
+            // comparacao da posicao j com j + 1 em relacao ao curso colocado, nota e id do candidato, com a respetiva prioridade
+            if((candidato[j].colocacao > candidato[j + 1].colocacao) ||
+                ((candidato[j].colocacao == candidato[j + 1].colocacao) &&
+                 (candidato[j].nota_candidatura > candidato[j + 1].nota_candidatura)) ||
+                ((candidato[j].colocacao == candidato[j + 1].colocacao) &&
+                 (candidato[j].nota_candidatura == candidato[j + 1].nota_candidatura) &&
+                 (candidato[j].ident_candidato) < candidato[j + 1].ident_candidato)){
+
+                temp = candidato[j];
+                candidato[j] = candidato[j + 1];
+                candidato[j + 1] = temp;
+
+                swaps = 1; // como se realizou uma troca os candidatos nao estao ordenados
+            }
+        }
+    }while(swaps == 1);
+}
+
+void ordenar_candidatos_nc(Candidatos *candidato, int num_candidatos){
+
+    int i = 0, swaps = 0; // verificacao se os candidatos ja estao ordenados, de forma a se fazer menos iteracoes
+    Candidatos temp;
+
+    do{
+        swaps = 0;
+        for(int j = 0; j < (num_candidatos - 1 - i); j++){
+
+            // comparacao da posicao j com j + 1
+            if(candidato[j].ident_candidato > candidato[j + 1].ident_candidato){
+
+                temp = candidato[j];
+                candidato[j] = candidato[j + 1];
+                candidato[j + 1] = temp;
+
+                swaps = 1; // como se realizou uma troca os candidatos nao estao ordenados
+            }
+        }
+    }while(swaps == 1);
+}
+
+// apresentar candidatos por ordem de curso, ordem ascendente da nota, e ordem descendente de numero
+void file_write_candidatos_colocados(char *filename, Candidatos *candidato, int num_candidatos, Cursos *curso, int num_cursos){
+
+    FILE *fp;
+
+    int j = 0;
+
+    // sorting ordem de curso, ordem ascendente da nota, e ordem descendente de numero
+
+    // chamar a funcao para ordenar os candidatos
+    ordenar_candidatos_out(candidato, num_candidatos);
+
+    fp = fopen(filename, "w");
+
+    fprintf(fp, "Candidato,Nota,Opcao,Instituicao,Curso\n"); // Escrever cabeçalho
+
+    for(int i = 0; i < num_candidatos; i++){
+
+        for(int j = 0; j < num_cursos; j++){ // isto e necessario??
+
+            if(candidato[i].colocacao == j){
+
+                fprintf(fp, "%d,%.2f,%d,%s,%s\n", candidato[i].ident_candidato, candidato[i].nota_candidatura, candidato[i].opcao_colocada, curso[j].nome_instituicao, curso[j].nome_curso);
+            }
+        }
+    }
+
+    fclose(fp);
+}
+
+// mesma ordem que o ficheiro anterior mas com uma linha com as informacoes do curso
+void file_write_info_cursos_candidatos(char *filename, Candidatos *candidato, int num_candidatos, Cursos *curso, int num_cursos){
+
+    FILE *fp;
+
+    // sorting ordem de curso, ordem ascendente da nota, e ordem descendente de numero
+
+    fp = fopen(filename, "w");
+
+    for(int j = 0; j < num_cursos; j++){
+
+        fprintf(fp, "%s,%s,%d,%d,%2.f\n", curso[j].nome_instituicao, curso[j].nome_curso, curso[j].vagas, curso[j].vagas_preenchidas, curso[j].nota_minima);
+
+        for(int i = 0; i < num_candidatos; i++){
+
+            if(candidato[i].colocacao == j){
+
+                fprintf(fp, "%d,%.2f,%d,%s,%s\n", candidato[i].ident_candidato, candidato[i].nota_candidatura, candidato[i].opcao_colocada, curso[j].nome_instituicao, curso[j].nome_curso);
+            }
+        }
+    }
+
+    fclose(fp);
+}
+
+// cursos por ordem crescente com o nome instituicao, curso, vagas, colocacoes e nota_minima
+void file_write_info_cursos(char *filename, Cursos *curso, int num_cursos){
+
+    FILE *fp;
+
+    fp = fopen(filename, "w");
+
+    fprintf(fp, "Instituicao,Curso,Vagas,Colocacoes,Nota_Mínima\n"); // Escrever cabeçalho
+
+    for(int i = 0; i < num_cursos; i++){
+
+        fprintf(fp, "%s,%s,%d,%d,%2.f\n", curso[i].nome_instituicao, curso[i].nome_curso, curso[i].vagas, curso[i].vagas_preenchidas, curso[i].nota_minima);
+    }
+
+    fclose(fp);
+}
+
+// ordem ascendente dos candidatos nao colocados com a sua nota
+void file_write_candidatos_nao_colocados(char *filename, Candidatos *candidato, int num_candidatos, Cursos *curso, int num_cursos){
+
+    FILE *fp;
+
+    // sorting dos candidatos por ordem de id
+
+    // chamar a funcao para ordenar os candidatos
+    ordenar_candidatos_nc(candidato, num_candidatos);
+
+    fp = fopen(filename, "w");
+
+    fprintf(fp, "Candidato,Nota\n"); // Escrever cabeçalho
+
+    for(int i = 0; i < num_candidatos; i++){
+
+        if(candidato[i].colocacao == -1){
+
+            fprintf(fp, "%d,%.2f\n", candidato[i].ident_candidato, candidato[i].nota_candidatura);
+        }
+    }
+
+    fclose(fp);
+}
